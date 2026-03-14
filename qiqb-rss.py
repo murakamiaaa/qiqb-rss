@@ -63,24 +63,21 @@ def create_rss():
             print("❌ 記事のリンクが見つかりません。")
             sys.exit(1)
 
-        # 💡 成功した記事だけをカウントするための変数
         added_count = 0
 
-        # 全てのURLを順番に試す（最大10件成功するまで）
         for url in article_urls:
             if added_count >= 10:
-                break # 10件集まったら終了
+                break 
 
             print(f"記事を取得中: {url}")
             time.sleep(1)
             
-            # 💡 修正ポイント：個別の記事取得でエラーが出ても、止まらずにスキップする
             try:
                 detail_res = session.get(url, timeout=20)
-                detail_res.raise_for_status() # 404などのエラー判定
+                detail_res.raise_for_status()
             except requests.exceptions.RequestException as e:
-                print(f"  -> ⚠️ スキップします（404エラーなど削除された記事の可能性）: {e}")
-                continue # エラーが起きたら、下の処理をやらずに次のURLへ行く！
+                print(f"  -> ⚠️ スキップします: {e}")
+                continue 
 
             detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
             
@@ -94,8 +91,39 @@ def create_rss():
                 
             print(f"  -> 解析成功: {article_title}")
             
-            article_box = detail_soup.find(['article', 'main']) or detail_soup.find('div', class_=re.compile(r'content|post|detail|entry|news_detail', re.I))
+            # 💡 本文を全文抽出する最強アルゴリズム
+            article_box = None
             
+            # パターンA: 典型的な記事のクラス名
+            for selector in ['article', '.entry-content', '.post-content', '.article-body', '.news-detail']:
+                element = detail_soup.select_first(selector)
+                if element and len(element.get_text(strip=True)) > 100:
+                    article_box = element
+                    break
+
+            # パターンB: <p>タグ（段落）の文字数をカウントし、一番文字が詰まっている箱を本文とする
+            if not article_box:
+                parent_scores = {}
+                for p in detail_soup.find_all('p'):
+                    text_len = len(p.get_text(strip=True))
+                    if text_len > 20: # 短いナビゲーションテキストを除外
+                        parent = p.parent
+                        if parent not in parent_scores:
+                            parent_scores[parent] = 0
+                        parent_scores[parent] += text_len
+                
+                if parent_scores:
+                    article_box = max(parent_scores, key=parent_scores.get)
+            
+            # パターンC: それでもダメなら、ページ全体の意味のある <p> をかき集める
+            if (not article_box) or (len(article_box.get_text(strip=True)) < 50):
+                article_box = detail_soup.new_tag('div')
+                for p in detail_soup.find_all('p'):
+                    if len(p.get_text(strip=True)) > 20:
+                        import copy
+                        article_box.append(copy.copy(p))
+
+            # 本文HTMLの生成と画像の絶対URL化
             if article_box and len(article_box.get_text(strip=True)) > 50:
                 for img in article_box.find_all('img'):
                     src = img.get('src')
@@ -103,11 +131,7 @@ def create_rss():
                         img['src'] = urljoin(url, src)
                 content_html = str(article_box)
             else:
-                meta_desc = detail_soup.find('meta', attrs={'name': 'description'}) or detail_soup.find('meta', property='og:description')
-                if meta_desc and meta_desc.get('content'):
-                    content_html = f"<p>【要約】<br>{meta_desc.get('content')}</p><p><a href='{url}'>記事の全文はこちら</a></p>"
-                else:
-                    content_html = f"<p>本文の抽出に失敗しました。<a href='{url}'>記事の全文はこちら</a></p>"
+                content_html = f"<p>本文の抽出に失敗しました。<a href='{url}'>記事の全文はこちら</a></p>"
             
             fe = fg.add_entry()
             fe.id(url)
@@ -116,7 +140,7 @@ def create_rss():
             fe.description(content_html)
             fe.pubDate(datetime.datetime.now(datetime.timezone.utc))
             
-            added_count += 1 # 成功した数を1増やす
+            added_count += 1 
 
         output_file = 'feed.xml'
         fg.rss_file(output_file)
