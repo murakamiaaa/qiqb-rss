@@ -24,7 +24,7 @@ def create_rss():
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     })
 
-    print("--- QIQBニュース 解析開始 (絶対安定版V4) ---")
+    print("--- QIQBニュース 解析開始 (ハイブリッド要約抽出版V5) ---")
 
     try:
         article_urls = []
@@ -68,7 +68,6 @@ def create_rss():
                 detail_res.raise_for_status()
                 detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
                 
-                # タイトル取得
                 title_tag = detail_soup.find('h1')
                 if title_tag and title_tag.get_text(strip=True):
                     article_title = title_tag.get_text(strip=True)
@@ -77,9 +76,6 @@ def create_rss():
                 else:
                     article_title = "タイトルなし"
                     
-                print(f"  -> タイトル: {article_title}")
-                
-                # 🛡️ 複雑な計算をすべて捨てた、力技の本文取得
                 article_box = None
                 for class_name in ['content', 'post', 'detail', 'entry', 'news-detail', 'article-body', 'entry-content']:
                     box = detail_soup.find('div', class_=re.compile(class_name, re.I))
@@ -90,7 +86,6 @@ def create_rss():
                 if not article_box:
                     article_box = detail_soup.find('article') or detail_soup.find('main')
 
-                # 画像URLの修正とHTML化
                 if article_box and len(article_box.get_text(strip=True)) > 50:
                     for img in article_box.find_all('img'):
                         if img.get('src'):
@@ -104,12 +99,17 @@ def create_rss():
                                 if img.get('src'):
                                     img['src'] = urljoin(url, img['src'])
                             html_parts.append(str(p))
+                    
                     if html_parts:
                         content_html = f"<div>{''.join(html_parts)}</div>"
                     else:
-                        content_html = f"<p>本文の抽出に失敗しました。<a href='{url}'>記事の全文はこちら</a></p>"
+                        # 💡 究極のバックアップ：検索エンジン用の「要約」を抜き出す！
+                        meta_desc = detail_soup.find('meta', attrs={'name': 'description'}) or detail_soup.find('meta', property='og:description')
+                        if meta_desc and meta_desc.get('content'):
+                            content_html = f"<p><strong>【記事の要約】</strong><br>{meta_desc.get('content')}</p><p><br><em>※この記事は特殊な構造のため、全文は公式サイトでご覧ください。</em><br><a href='{url}'>👉 記事の全文を読む</a></p>"
+                        else:
+                            content_html = f"<p>本文の抽出に失敗しました。<a href='{url}'>記事の全文はこちら</a></p>"
                 
-                # RSS生成
                 fe = fg.add_entry()
                 fe.id(url)
                 fe.title(article_title)
@@ -121,7 +121,6 @@ def create_rss():
                 print("  -> 追加成功")
 
             except Exception as e:
-                # 何が起きても絶対に止まらない
                 print(f"  -> ⚠️ スキップ ({e})")
                 continue
 
