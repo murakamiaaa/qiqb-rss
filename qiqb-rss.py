@@ -24,14 +24,11 @@ def create_rss():
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     })
 
-    # 💡 バージョン確認用の出力
-    print("--- QIQBニュース 解析開始 (装甲版V3) ---")
+    print("--- QIQBニュース 解析開始 (絶対安定版V4) ---")
 
     try:
         article_urls = []
-        
         for target_url in [list_url, base_url]:
-            print(f"URLを収集します: {target_url}")
             res = session.get(target_url, timeout=20)
             res.raise_for_status()
             soup = BeautifulSoup(res.text, 'html.parser')
@@ -45,11 +42,9 @@ def create_rss():
                 article_urls.append(f"https://qiqb.osaka-u.ac.jp/newstopics/{match}")
 
             clean_urls = []
-            exclude_keywords = ['list', 'category', 'page', 'tag']
-            
             for url in set(article_urls):
                 url = url.split('#')[0].split('?')[0]
-                if not any(x in url for x in exclude_keywords):
+                if not any(x in url for x in ['list', 'category', 'page', 'tag']):
                     if url.rstrip('/') != "https://qiqb.osaka-u.ac.jp/newstopics":
                         clean_urls.append(url)
             
@@ -59,26 +54,21 @@ def create_rss():
             time.sleep(1)
 
         print(f"発見した記事リンク数: {len(article_urls)}件")
-
         if not article_urls:
-            print("❌ 記事のリンクが見つかりません。")
             sys.exit(1)
 
         added_count = 0
-
         for url in article_urls:
-            if added_count >= 10:
-                break 
-
+            if added_count >= 10: break 
             print(f"記事を取得中: {url}")
             time.sleep(1)
             
-            # 🛡️ 鉄壁のバリア（個別記事でエラーが起きても全体は止まらない）
             try:
                 detail_res = session.get(url, timeout=20)
                 detail_res.raise_for_status()
                 detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
                 
+                # タイトル取得
                 title_tag = detail_soup.find('h1')
                 if title_tag and title_tag.get_text(strip=True):
                     article_title = title_tag.get_text(strip=True)
@@ -87,51 +77,39 @@ def create_rss():
                 else:
                     article_title = "タイトルなし"
                     
-                print(f"  -> 解析成功: {article_title}")
+                print(f"  -> タイトル: {article_title}")
                 
+                # 🛡️ 複雑な計算をすべて捨てた、力技の本文取得
                 article_box = None
-                
-                for selector in ['article', '.entry-content', '.post-content', '.article-body', '.news-detail', 'main']:
-                    element = detail_soup.select_first(selector)
-                    if element and len(element.get_text(strip=True)) > 100:
-                        article_box = element
+                for class_name in ['content', 'post', 'detail', 'entry', 'news-detail', 'article-body', 'entry-content']:
+                    box = detail_soup.find('div', class_=re.compile(class_name, re.I))
+                    if box and len(box.get_text(strip=True)) > 50:
+                        article_box = box
                         break
-
+                
                 if not article_box:
-                    parent_scores = {}
-                    for p in detail_soup.find_all('p'):
-                        text_len = len(p.get_text(strip=True))
-                        if text_len > 20: 
-                            parent = p.parent
-                            if parent and parent.name not in ['body', 'html', '[document]']:
-                                if parent not in parent_scores:
-                                    parent_scores[parent] = 0
-                                parent_scores[parent] += text_len
-                    
-                    if parent_scores:
-                        article_box = max(parent_scores, key=parent_scores.get)
+                    article_box = detail_soup.find('article') or detail_soup.find('main')
 
+                # 画像URLの修正とHTML化
                 if article_box and len(article_box.get_text(strip=True)) > 50:
                     for img in article_box.find_all('img'):
-                        src = img.get('src')
-                        if src:
-                            img['src'] = urljoin(url, src)
+                        if img.get('src'):
+                            img['src'] = urljoin(url, img['src'])
                     content_html = str(article_box)
                 else:
                     html_parts = []
                     for p in detail_soup.find_all('p'):
                         if len(p.get_text(strip=True)) > 20:
                             for img in p.find_all('img'):
-                                src = img.get('src')
-                                if src:
-                                    img['src'] = urljoin(url, src)
+                                if img.get('src'):
+                                    img['src'] = urljoin(url, img['src'])
                             html_parts.append(str(p))
-                    
                     if html_parts:
                         content_html = f"<div>{''.join(html_parts)}</div>"
                     else:
-                        content_html = f"<p>本文の抽出に失敗しました。<a href='{url}'>記事の全文はこちら（ブラウザで開きます）</a></p>"
+                        content_html = f"<p>本文の抽出に失敗しました。<a href='{url}'>記事の全文はこちら</a></p>"
                 
+                # RSS生成
                 fe = fg.add_entry()
                 fe.id(url)
                 fe.title(article_title)
@@ -140,10 +118,11 @@ def create_rss():
                 fe.pubDate(datetime.datetime.now(datetime.timezone.utc))
                 
                 added_count += 1 
+                print("  -> 追加成功")
 
             except Exception as e:
-                # 💥 ここが作動して、エラー記事を華麗にスルーします
-                print(f"  -> ⚠️ この記事はスキップします ({e})")
+                # 何が起きても絶対に止まらない
+                print(f"  -> ⚠️ スキップ ({e})")
                 continue
 
         output_file = 'feed.xml'
@@ -151,8 +130,7 @@ def create_rss():
         print(f"✅ 成功: {output_file} を書き出しました！（合計 {added_count} 件）")
 
     except Exception as e:
-        # 💡 万が一の最終エラーメッセージも書き換えています
-        print(f"💥 致命的なシステムエラー: {e}")
+        print(f"💥 システムエラー: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
