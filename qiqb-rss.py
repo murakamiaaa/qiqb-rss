@@ -34,12 +34,15 @@ def create_rss():
         
         article_urls = []
         for a in soup.find_all('a', href=True):
-            href = a['href']
-            # QIQBの記事は /newstopics/〇〇 というURL。一覧(list)やカテゴリ(category)のページは除外
-            if '/newstopics/' in href and not any(x in href for x in ['list', 'category', 'page']):
-                full_url = urljoin(res.url, href)
-                if full_url not in article_urls:
-                    article_urls.append(full_url)
+            # 💡 修正ポイント：先にURLを「完全な形」に翻訳してから判定する！
+            full_url = urljoin(res.url, a['href'])
+            
+            # /newstopics/ が含まれていて、かつ一覧ページやカテゴリ一覧ではない記事URLを拾う
+            if '/newstopics/' in full_url and not any(x in full_url for x in ['list', 'category', 'page']):
+                # URLの末尾が /newstopics/ や /newstopics 自体でないことも確認
+                if full_url.rstrip('/') != "https://qiqb.osaka-u.ac.jp/newstopics":
+                    if full_url not in article_urls:
+                        article_urls.append(full_url)
 
         print(f"発見した記事リンク数: {len(article_urls)}件")
 
@@ -50,25 +53,25 @@ def create_rss():
         # 最新10件を取得
         for url in article_urls[:10]:
             print(f"記事を取得中: {url}")
-            time.sleep(1) # サーバーへの配慮
+            time.sleep(1)
             
             detail_res = session.get(url, timeout=20)
             detail_res.raise_for_status()
             detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
             
-            # 1. タイトルを探す（h1タグ、またはブラウザのタブ名）
+            # 1. タイトルを探す
             title_tag = detail_soup.find('h1')
             if title_tag:
                 article_title = title_tag.get_text(strip=True)
             elif detail_soup.title:
-                article_title = detail_soup.title.get_text(strip=True).replace(' | QIQB：量子情報・量子生命研究センター 大阪大学 世界最先端研究機構', '')
+                article_title = detail_soup.title.get_text(strip=True).split('|')[0].strip()
             else:
                 article_title = "タイトルなし"
                 
             print(f"  -> 解析成功: {article_title}")
             
-            # 2. 本文を探す（大学のサイトでよく使われる main, article, または content クラス）
-            article_box = detail_soup.find(['article', 'main']) or detail_soup.find('div', class_=re.compile(r'content|post|detail|entry', re.I))
+            # 2. 本文を探す（大学や研究機関のサイトでよく使われるクラス名を網羅）
+            article_box = detail_soup.find(['article', 'main']) or detail_soup.find('div', class_=re.compile(r'content|post|detail|entry|news_detail', re.I))
             
             content_html = "<p>本文の抽出に失敗しました。</p>"
             if article_box:
