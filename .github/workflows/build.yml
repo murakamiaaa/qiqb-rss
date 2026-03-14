@@ -1,0 +1,34 @@
+name: build
+on:
+  schedule:
+    - cron: '0 0,12 * * *'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scraper
+        run: python qiqb-rss.py
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -f feed.xml ]; then
+            git add feed.xml
+            git diff --quiet && git diff --staged --quiet || (git commit -m "Update QIQB RSS" && git push)
+          else
+            echo "Error: feed.xml not found!"
+            exit 1
+          fi
