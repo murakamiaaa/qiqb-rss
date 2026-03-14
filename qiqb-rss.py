@@ -24,7 +24,8 @@ def create_rss():
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     })
 
-    print("--- QIQBニュース 解析開始 ---")
+    # 💡 バージョン確認用の出力
+    print("--- QIQBニュース 解析開始 (装甲版V3) ---")
 
     try:
         article_urls = []
@@ -72,82 +73,86 @@ def create_rss():
             print(f"記事を取得中: {url}")
             time.sleep(1)
             
+            # 🛡️ 鉄壁のバリア（個別記事でエラーが起きても全体は止まらない）
             try:
                 detail_res = session.get(url, timeout=20)
                 detail_res.raise_for_status()
-            except requests.exceptions.RequestException as e:
-                print(f"  -> ⚠️ スキップします: {e}")
-                continue 
-
-            detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
-            
-            title_tag = detail_soup.find('h1')
-            if title_tag and title_tag.get_text(strip=True):
-                article_title = title_tag.get_text(strip=True)
-            elif detail_soup.title:
-                article_title = detail_soup.title.get_text(strip=True).split('|')[0].strip()
-            else:
-                article_title = "タイトルなし"
+                detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
                 
-            print(f"  -> 解析成功: {article_title}")
-            
-            # 💡 本文を全文抽出する最強アルゴリズム
-            article_box = None
-            
-            # パターンA: 典型的な記事のクラス名
-            for selector in ['article', '.entry-content', '.post-content', '.article-body', '.news-detail']:
-                element = detail_soup.select_first(selector)
-                if element and len(element.get_text(strip=True)) > 100:
-                    article_box = element
-                    break
-
-            # パターンB: <p>タグ（段落）の文字数をカウントし、一番文字が詰まっている箱を本文とする
-            if not article_box:
-                parent_scores = {}
-                for p in detail_soup.find_all('p'):
-                    text_len = len(p.get_text(strip=True))
-                    if text_len > 20: # 短いナビゲーションテキストを除外
-                        parent = p.parent
-                        if parent not in parent_scores:
-                            parent_scores[parent] = 0
-                        parent_scores[parent] += text_len
+                title_tag = detail_soup.find('h1')
+                if title_tag and title_tag.get_text(strip=True):
+                    article_title = title_tag.get_text(strip=True)
+                elif detail_soup.title:
+                    article_title = detail_soup.title.get_text(strip=True).split('|')[0].strip()
+                else:
+                    article_title = "タイトルなし"
+                    
+                print(f"  -> 解析成功: {article_title}")
                 
-                if parent_scores:
-                    article_box = max(parent_scores, key=parent_scores.get)
-            
-            # パターンC: それでもダメなら、ページ全体の意味のある <p> をかき集める
-            if (not article_box) or (len(article_box.get_text(strip=True)) < 50):
-                article_box = detail_soup.new_tag('div')
-                for p in detail_soup.find_all('p'):
-                    if len(p.get_text(strip=True)) > 20:
-                        import copy
-                        article_box.append(copy.copy(p))
+                article_box = None
+                
+                for selector in ['article', '.entry-content', '.post-content', '.article-body', '.news-detail', 'main']:
+                    element = detail_soup.select_first(selector)
+                    if element and len(element.get_text(strip=True)) > 100:
+                        article_box = element
+                        break
 
-            # 本文HTMLの生成と画像の絶対URL化
-            if article_box and len(article_box.get_text(strip=True)) > 50:
-                for img in article_box.find_all('img'):
-                    src = img.get('src')
-                    if src:
-                        img['src'] = urljoin(url, src)
-                content_html = str(article_box)
-            else:
-                content_html = f"<p>本文の抽出に失敗しました。<a href='{url}'>記事の全文はこちら</a></p>"
-            
-            fe = fg.add_entry()
-            fe.id(url)
-            fe.title(article_title)
-            fe.link(href=url)
-            fe.description(content_html)
-            fe.pubDate(datetime.datetime.now(datetime.timezone.utc))
-            
-            added_count += 1 
+                if not article_box:
+                    parent_scores = {}
+                    for p in detail_soup.find_all('p'):
+                        text_len = len(p.get_text(strip=True))
+                        if text_len > 20: 
+                            parent = p.parent
+                            if parent and parent.name not in ['body', 'html', '[document]']:
+                                if parent not in parent_scores:
+                                    parent_scores[parent] = 0
+                                parent_scores[parent] += text_len
+                    
+                    if parent_scores:
+                        article_box = max(parent_scores, key=parent_scores.get)
+
+                if article_box and len(article_box.get_text(strip=True)) > 50:
+                    for img in article_box.find_all('img'):
+                        src = img.get('src')
+                        if src:
+                            img['src'] = urljoin(url, src)
+                    content_html = str(article_box)
+                else:
+                    html_parts = []
+                    for p in detail_soup.find_all('p'):
+                        if len(p.get_text(strip=True)) > 20:
+                            for img in p.find_all('img'):
+                                src = img.get('src')
+                                if src:
+                                    img['src'] = urljoin(url, src)
+                            html_parts.append(str(p))
+                    
+                    if html_parts:
+                        content_html = f"<div>{''.join(html_parts)}</div>"
+                    else:
+                        content_html = f"<p>本文の抽出に失敗しました。<a href='{url}'>記事の全文はこちら（ブラウザで開きます）</a></p>"
+                
+                fe = fg.add_entry()
+                fe.id(url)
+                fe.title(article_title)
+                fe.link(href=url)
+                fe.description(content_html)
+                fe.pubDate(datetime.datetime.now(datetime.timezone.utc))
+                
+                added_count += 1 
+
+            except Exception as e:
+                # 💥 ここが作動して、エラー記事を華麗にスルーします
+                print(f"  -> ⚠️ この記事はスキップします ({e})")
+                continue
 
         output_file = 'feed.xml'
         fg.rss_file(output_file)
         print(f"✅ 成功: {output_file} を書き出しました！（合計 {added_count} 件）")
 
     except Exception as e:
-        print(f"💥 全体エラー内容: {e}")
+        # 💡 万が一の最終エラーメッセージも書き換えています
+        print(f"💥 致命的なシステムエラー: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
